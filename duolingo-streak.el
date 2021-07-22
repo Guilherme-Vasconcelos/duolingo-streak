@@ -42,6 +42,10 @@
 ;;  to complete your task.
 ;;
 ;;  Inspired by: https://github.com/johnvictorfs/dotfiles/blob/master/polybar/scripts/duolingo_streak.py
+;;  TODO: try to remove some progs
+;;  TODO: when parsing login response, use let to bind status-code
+;;  TODO: when parsing login response, also store jwt in a global variable
+;;  TODO: when parsing login response, also check for non 200
 
 ;;; Code:
 
@@ -55,25 +59,46 @@
 
 
 (defun duolingo-streak--assert-env-vars ()
-  "Asserts that user has set their environment variables."
+  "Assert that user has set their environment variables."
   (unless (and duolingo-streak--user-username duolingo-streak--user-password)
     (error "Error: you should set the environment variables `DUOLINGO_USERNAME' and `DUOLINGO_PASSWORD'")))
 
 
-(defun duolingo-streak--login-user-request ())
+(defun duolingo-streak--parse-login-response (response)
+  "Parse login RESPONSE from Duolingo and return either an error or the jwt token."
+  (progn
+    (when (eq (request-response-status-code response) 403)
+      (error "Duolingo API has returned code status 403 forbidden: either change your User Agent, or try again later"))
+    (request-response-header response "jwt")))
+
+
+(defun duolingo-streak--login-user-request ()
+  "Send request to Duolingo to log in."
+  (request duolingo-streak--user-login-url
+    :type "POST"
+    :data `(("login" . ,duolingo-streak--user-username) ("password" . ,duolingo-streak--user-password))
+    :headers `(("User-Agent" . ,duolingo-streak--default-user-agent))
+    :parser 'json-read
+    :success (cl-function
+              (lambda (&key response &allow-other-keys)
+                (duolingo-streak--parse-login-response response)))
+    :error (cl-function
+            (lambda (&key response &allow-other-keys)
+              (error "Unexpected error occurred. Response: %S" response)))))
+
 
 (defun duolingo-streak--get-user-info-request ()
-  "Sends request to Duolingo to get user's data."
+  "Send request to Duolingo to get user's data."
   (request duolingo-streak--user-info-url
-           :parser 'json-read))
+    :parser 'json-read))
 
 
 (defun duolingo-streak--verify-daily-task ()
-  "Verifies if user has completed their daily task."
+  "Verify if user has completed their daily task."
   (interactive)
   (progn
     (duolingo-streak--assert-env-vars)
-    (duolingo-streak--get-user-info-request)))
+    (duolingo-streak--login-user-request)))
 
 
 (provide 'duolingo-streak)
