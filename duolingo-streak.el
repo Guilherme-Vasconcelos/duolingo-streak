@@ -57,6 +57,8 @@
 (defconst duolingo-streak--user-login-url "https://www.duolingo.com/login")
 (defconst duolingo-streak--default-user-agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.116 Safari/537.36")
 
+(defvar duolingo-streak--jwt-token nil)
+
 
 (defun duolingo-streak--assert-env-vars ()
   "Assert that user has set their environment variables."
@@ -64,15 +66,36 @@
     (error "Error: you should set the environment variables `DUOLINGO_USERNAME' and `DUOLINGO_PASSWORD'")))
 
 
+(defun duolingo-streak--parse-user-info-response (response)
+  "Parse RESPONSE to verify whether user has completed their daily task or not."
+  (message "%S" (request-response-data response)))  ; TODO
+
+
+(defun duolingo-streak--get-user-info-request ()
+  "Send request to Duolingo to get user's data."
+  (request duolingo-streak--user-info-url
+    :headers `(("Authorization" . ,(concat "Bearer " duolingo-streak--jwt-token)) ("User-Agent" . ,duolingo-streak--default-user-agent))
+    :parser 'json-read
+    :success (cl-function
+              (lambda (&key response &allow-other-keys)
+                (duolingo-streak--parse-user-info-response response)))
+    :error (cl-function
+            (lambda (&key response &allow-other-keys)
+              (error "Unexpected error occurred when reading user data. Response: %S" response)))))
+
+
 (defun duolingo-streak--parse-login-response (response)
   "Parse login RESPONSE from Duolingo and return either an error or the jwt token."
-  (progn
-    (when (eq (request-response-status-code response) 403)
-      (error "Duolingo API has returned code status 403 forbidden: either change your User Agent, or try again later"))
-    (request-response-header response "jwt")))
+  (let ((login-resp-status-code (request-response-status-code response)))
+    (if (eq login-resp-status-code 403)
+        (error "Duolingo has returned status code 403 forbidden: either change your User Agent, or try again later")
+      (unless (eq login-resp-status-code 200)
+        (error "Duolingo has returned unexpected status code %s" login-resp-status-code))))
+  (setq-default duolingo-streak--jwt-token (request-response-header response "jwt"))
+  (duolingo-streak--get-user-info-request))
 
 
-(defun duolingo-streak--login-user-request ()
+(defun duolingo-streak--perform-login-and-parse-user-data ()
   "Send request to Duolingo to log in."
   (request duolingo-streak--user-login-url
     :type "POST"
@@ -84,21 +107,14 @@
                 (duolingo-streak--parse-login-response response)))
     :error (cl-function
             (lambda (&key response &allow-other-keys)
-              (error "Unexpected error occurred. Response: %S" response)))))
-
-
-(defun duolingo-streak--get-user-info-request ()
-  "Send request to Duolingo to get user's data."
-  (request duolingo-streak--user-info-url
-    :parser 'json-read))
+              (error "Unexpected error occurred when retrieving jwt token. Response: %S" response)))))
 
 
 (defun duolingo-streak--verify-daily-task ()
   "Verify if user has completed their daily task."
   (interactive)
-  (progn
-    (duolingo-streak--assert-env-vars)
-    (duolingo-streak--login-user-request)))
+  (duolingo-streak--assert-env-vars)
+  (duolingo-streak--perform-login-and-parse-user-data))
 
 
 (provide 'duolingo-streak)
